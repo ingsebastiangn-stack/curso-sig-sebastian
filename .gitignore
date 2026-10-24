@@ -1,0 +1,9 @@
+# datos pesados (los regeneramos con el script)
+*.gpkg
+datos/*.geojson
+
+# credenciales y entornos
+.env
+venv/
+__pycache__/
+node_modules/
