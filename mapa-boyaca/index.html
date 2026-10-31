@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Veredas y hospitales de Boyacá</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <style>
+    html, body, #mapa { height: 100%; margin: 0; }
+    #estado {
+      position: absolute; z-index: 1100; left: 50%; transform: translateX(-50%); top: 10px;
+      background: #fff; padding: 6px 12px; border-radius: 6px; box-shadow: 0 1px 5px rgba(0,0,0,.4);
+      font: 14px/1.3 system-ui, sans-serif; max-width: 90%;
+    }
+    #estado.error { background: #fde8e8; color: #7a1010; }
+  </style>
+</head>
+<body>
+  <div id="estado">Cargando servicios del IDE Boyacá…</div>
+  <div id="mapa"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const mapa = L.map("mapa").setView([5.54, -73.36], 8);   // Boyacá
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "© OpenStreetMap"
+    }).addTo(mapa);
+
+    const estado = document.getElementById("estado");
+
+    // Los datos vienen de un servicio externo: se escapan antes de meterlos en el popup.
+    function esc(texto) {
+      const d = document.createElement("div");
+      d.textContent = texto ?? "—";
+      return d.innerHTML;
+    }
+
+    // Servicio vivo: IDE Boyacá (ArcGIS FeatureServer), respuesta en GeoJSON.
+    const IDE = "https://services6.arcgis.com/Ex2fmFOuTOHRZtML/ArcGIS/rest/services/";
+    function urlConsulta(servicio, campos, extra = "") {
+      return IDE + servicio + "/FeatureServer/0/query"
+        + "?where=1%3D1&outFields=" + campos + "&outSR=4326&f=geojson" + extra;
+    }
+
+    async function pedir(url) {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const geo = await r.json();
+      // ArcGIS responde 200 aunque falle: el error viene dentro del JSON.
+      if (geo.error) throw new Error(geo.error.message || "error del servicio");
+      return geo;
+    }
+
+    // Capa 1 — VEREDAS (polígonos), estilo propio: contorno naranja y relleno translúcido.
+    const capaVeredas = L.geoJSON(null, {
+      style: { color: "#d95f02", weight: 1, fillColor: "#fdae6b", fillOpacity: 0.35 },
+      onEachFeature: (f, layer) => layer.bindPopup(
+        `<b>${esc(f.properties.NOMBRE_VER)}</b><br>Municipio: ${esc(f.properties.NOMB_MPIO)}`
+        + `<br>Código: ${esc(f.properties.CODIGO_VER)}`)
+    }).addTo(mapa);
+
+    // Capa 2 — HOSPITALES (puntos), disponible en el control de capas (apagada al inicio).
+    const capaHospitales = L.geoJSON(null, {
+      pointToLayer: (f, latlng) => L.circleMarker(latlng,
+        { radius: 5, color: "#7f0000", weight: 1, fillColor: "#e31a1c", fillOpacity: 0.9 }),
+      onEachFeature: (f, layer) => layer.bindPopup(
+        `<b>${esc(f.properties.Nombre)}</b><br>${esc(f.properties.NOM_MPIO)}`
+        + `<br>${esc(f.properties.Direccion)}`)
+    });
+
+    L.control.layers(null, {
+      "Veredas (polígonos)": capaVeredas,
+      "Hospitales (puntos)": capaHospitales
+    }, { collapsed: false }).addTo(mapa);
+
+    // maxAllowableOffset (grados) simplifica los polígonos para que la página cargue más rápido.
+    // Si el servicio lo rechazara, quita esos dos parámetros y funciona igual (más pesado).
+    const pedirVeredas = pedir(urlConsulta(
+      "Veredas_Boyaca_2024", "NOMBRE_VER,NOMB_MPIO,CODIGO_VER",
+      "&maxAllowableOffset=0.0005&geometryPrecision=5"));
+    const pedirHospitales = pedir(urlConsulta(
+      "Hospitales_Boyac%C3%A1", "Nombre,NOM_MPIO,Direccion"));
+
+    Promise.allSettled([pedirVeredas, pedirHospitales]).then(([v, h]) => {
+      const partes = [], fallos = [];
+      if (v.status === "fulfilled") {
+        capaVeredas.addData(v.value);
+        partes.push(v.value.features.length + " veredas");
+      } else fallos.push("veredas (" + v.reason.message + ")");
+      if (h.status === "fulfilled") {
+        capaHospitales.addData(h.value);
+        partes.push(h.value.features.length + " hospitales");
+      } else fallos.push("hospitales (" + h.reason.message + ")");
+
+      if (fallos.length) {
+        estado.classList.add("error");
+        estado.textContent = "No se pudo cargar: " + fallos.join(", ")
+          + (partes.length ? " · Cargado: " + partes.join(", ") : "");
+      } else {
+        estado.textContent = partes.join(" · ");
+      }
+    });
+  </script>
+</body>
+</html>
